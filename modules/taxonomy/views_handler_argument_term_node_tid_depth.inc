@@ -107,31 +107,73 @@ class views_handler_argument_term_node_tid_depth extends views_handler_argument 
       $operator = "=";
       $tids = $this->argument;
     }
-    // Now build the subqueries.
-    $subquery = db_select('taxonomy_index', 'tn');
-    $subquery->addField('tn', 'nid');
-    $where = db_or()->condition('tn.tid', $tids, $operator);
-    $last = "tn";
+
+    // The tids variable can be an integer or an array of integers.
+    $tids = is_array($tids) ? $tids : array($tids);
 
     if ($this->options['depth'] > 0) {
-      $subquery->leftJoin('taxonomy_term_hierarchy', 'th', "th.tid = tn.tid");
-      $last = "th";
-      foreach (range(1, abs($this->options['depth'])) as $count) {
-        $subquery->leftJoin('taxonomy_term_hierarchy', "th$count", "$last.parent = th$count.tid");
-        $where->condition("th$count.tid", $tids, $operator);
-        $last = "th$count";
+      // When the depth is positive search the children.
+      foreach ($tids as $tid) {
+        // The term must be loaded to get vid for use in taxonomy_get_tree().
+        if ($term = taxonomy_term_load($tid)) {
+          // For every tid argument find all the children down to the depth set
+          // in the options and save the tids for the condition.
+          $tree = taxonomy_get_tree($term->vid, $term->tid, (int) $this->options['depth']);
+          $tids = array_merge($tids, array_map('_taxonomy_get_tid_from_term', $tree));
+        }
       }
     }
     elseif ($this->options['depth'] < 0) {
-      foreach (range(1, abs($this->options['depth'])) as $count) {
-        $subquery->leftJoin('taxonomy_term_hierarchy', "th$count", "$last.tid = th$count.parent");
-        $where->condition("th$count.tid", $tids, $operator);
-        $last = "th$count";
+      // When the depth is negative search the parents.
+      foreach ($tids as $tid) {
+        // For every tid argument find all the parents up to the depth set
+        // in the options and add the tids into the array. Since there is
+        // no taxonomy function to get all parents with a depth limit it
+        // is done here building a multidimensional array.
+        if ($term = taxonomy_term_load($tid)) {
+          // A variable is needed to track the current depth level.
+          $n = 0;
+          // Initialise our depth based parents array with the leaf term.
+          $parents[$n--][] = $term;
+          while ($n >= $this->options['depth']) {
+            // At each depth find the parents of the current terms.
+            // It is important to note that it is possible for a term to have
+            // multiple parents so get the parents of every parent and so on.
+            $parents[$n] = array();
+            foreach ($parents[$n + 1] as $term) {
+              $parents[$n] += taxonomy_get_parents($term->tid);
+            }
+            // Save all the tids for the condition.
+            $tids = array_merge($tids, array_map('_taxonomy_get_tid_from_term', $parents[$n]));
+            $n--;
+          }
+        }
       }
     }
 
-    $subquery->condition($where);
-    $this->query->add_where(0, "$this->table_alias.$this->real_field", $subquery, 'IN');
+    // Check the size of the array and set the operator accordingly.
+    if (count($tids) > 1) {
+      $operator = 'IN';
+    }
+    else {
+      $tids = current($tids);
+      $operator = '=';
+    }
+
+    // Join on taxonomy index table.
+    $join = new views_join();
+    $join->table = 'taxonomy_index';
+    $join->field = 'nid';
+    $join->left_table = $this->table_alias;
+    $join->left_field = $this->real_field;
+    $join->type = 'LEFT';
+    $taxonomy_index_alias = $this->query->add_relationship('taxonomy_index', $join, 'node');
+
+    // Limit to depth tids.
+    $this->query->add_where(0, $taxonomy_index_alias . ".tid", $tids, $operator);
+
+    // Distinct is required to prevent duplicate rows.
+    $this->query->distinct = TRUE;
   }
 
   function title() {
