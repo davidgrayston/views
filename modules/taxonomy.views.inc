@@ -428,7 +428,6 @@ function taxonomy_views_data_alter(&$data) {
       'handler' => 'views_handler_argument_term_node_tid_depth_modifier',
     ),
   );
-
 }
 
 /**
