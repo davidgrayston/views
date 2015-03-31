@@ -166,11 +166,15 @@ class views_handler_argument_term_node_tid_depth_join extends views_handler_argu
     $join->field = 'nid';
     $join->left_table = $this->table_alias;
     $join->left_field = $this->real_field;
-    $join->type = 'LEFT';
+    $join->type = 'INNER';
+    $join->extra = array(
+      array(
+        'field' => 'tid',
+        'value' => $tids,
+        'operator' => $operator,
+      )
+    );
     $taxonomy_index_alias = $this->query->add_relationship('taxonomy_index', $join, 'node');
-
-    // Limit to depth tids.
-    $this->query->add_where(0, $taxonomy_index_alias . ".tid", $tids, $operator);
 
     // Distinct is required to prevent duplicate rows.
     $this->query->distinct = TRUE;
